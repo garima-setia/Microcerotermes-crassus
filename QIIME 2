@@ -1,0 +1,46 @@
+### activate qiime2 environment ###
+source activate qiime2-2021.8
+
+## Import raw reads ###
+qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path reads/ --input-format CasavaOneEightSingleLanePerSampleDirFmt --output-path demux-paired-end_mc.qza
+
+### Demultiplex (sort individuals into samples) ###
+qiime demux summarize --i-data demux-paired-end_mc.qza --o-visualization demux_mc.qzv
+
+### DADA2 (quality control) ###
+qiime dada2 denoise-single --i-demultiplexed-seqs demux-paired-end_mc.qza --p-trim-left 20 --p-trunc-len 251 --p-n-threads 48 --output-dir dada2_output_forward_mc
+cd dada2_output_forward_mc
+qiime metadata tabulate --m-input-file denoising_stats.qza --o-visualization denoising_stats-dada2
+qiime feature-table summarize --i-table table.qza --o-visualization table.qzv --m-sample-metadata-file mc_metadata.txt
+qiime feature-table tabulate-seqs --i-data representative_sequences.qza --o-visualization representative_sequences.qzv
+
+### Subsample merging (grouped) ###
+qiime feature-table group --i-table table.qza --p-axis sample --m-metadata-file mc_metadata.txt --m-metadata-column sample --p-mode mean-ceiling --o-grouped-table tablegrouped.qza
+qiime feature-table summarize --i-table tablegrouped.qza --o-visualization tablegrouped.qzv --m-sample-metadata-file mc_metadata_grouped.txt
+
+### Taxonomy Assignment ###
+## Download archive-qiime-Open/unzip Silva 132 release.zip-Open Silva qiime release-click rep set-click rep set 16S-99
+## Drag silva-132-99-16S.fna to desktop and WINSMC into your 16S directory on server
+## Go to taxonomy-16S and transfer majority 7 levels and majority all levels to server
+
+qiime tools import --type FeatureData[Sequence] --input-path silva_132_99_16S.fna --output-path 99_otus_16s
+## Imported silva_132_99_16S.fna as DNASequencesDirectoryFormat to 99_otus_16s
+
+qiime tools import --type FeatureData[Taxonomy] --input-path majority_taxonomy_7_levels.txt --input-format HeaderlessTSVTaxonomyFormat --output-path majority_taxonomy_7_levels.qza
+## Imported majority_taxonomy_7_levels.txt as HeaderlessTSVTaxonomyFormat to majority_taxonomy_7_levels.qza
+
+qiime feature-classifier classify-consensus-blast --i-query representative_sequences.qza --i-reference-taxonomy majority_taxonomy_7_levels.qza --i-reference-reads 99_otus_16s.qza --o-classification taxonomy_16s_99 --p-perc-identity 0.97 --p-maxaccepts 1 &
+qiime alignment mafft --i-sequences representative_sequences.qza --o-alignment aligned-representative_sequences
+qiime alignment mask --i-alignment aligned-representative_sequences.qza --o-masked-alignment masked-representative_sequences
+qiime phylogeny fasttree --i-alignment masked-representative_sequences.qza --o-tree unrooted-tree
+qiime phylogeny midpoint-root --i-tree unrooted-tree.qza --o-rooted-tree rooted-tree
+qiime metadata tabulate --m-input-file taxonomy_16s_99.qza --m-input-file representative_sequences.qza --o-visualization repseqtaxonomytable.qzv
+
+### Alpha Rarefaction ###
+nohup qiime diversity alpha-rarefaction --i-table tablegrouped.qza --i-phylogeny rooted-tree.qza --p-min-depth 1 --p-max-depth 4118 --p-steps 1000 --o-visualization alpha-rarefactiongrouped_mc 
+
+### Taxabarplots ###
+qiime taxa barplot --i-table tablegrouped.qza --i-taxonomy taxonomy_16s_99.qza --o-visualization taxa-bar-plotsgrouped_mc
+qiime taxa filter-table --i-table tablegrouped.qza --i-taxonomy taxonomy_16s_99.qza --p-exclude Unassigned --o-filtered-table table-filteredgrouped 
+qiime feature-table summarize --i-table table-filteredgrouped.qza --o-visualization tablefilteredgrouped_mc.qzv --m-sample-metadata-file mc_metadata_grouped.txt
+qiime taxa barplot --i-table table-filteredgrouped.qza --i-taxonomy taxonomy_16s_99.qza --o-visualization taxa-bar-plots-filteredgrouped_mc
